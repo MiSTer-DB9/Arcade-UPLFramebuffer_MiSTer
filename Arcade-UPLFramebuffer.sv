@@ -87,6 +87,8 @@ localparam CONF_STR = {
 	"P3OR,Autosave Hiscores,Off,On;",
 	"-;",
 	"OJL,SDRAM Rd Latch,Auto,Normal,Early,Late,Later;",
+	// DIAG-REVERT-2026-10-13: SDRAM clock phase sweep option added
+	"OSV,SDRAM Clk Phase,Auto,0.0ns,1.0ns,2.1ns,3.1ns,4.2ns,5.2ns,6.3ns,7.3ns,8.3ns,9.4ns,10.4ns,11.5ns,12.5ns,13.5ns,14.6ns;",
 	"-;",
 	"DIP;",
 	"-;",
@@ -154,17 +156,123 @@ hps_io #(.CONF_STR(CONF_STR)) hps_io
 wire CLK_60M;
 wire locked;
 
+// DIAG-REVERT-2026-10-13: original PLL instance commented out below
+// pll pll
+// (
+//     .refclk(CLK_50M),
+//     .rst(0),
+//     .outclk_0(CLK_60M),
+//     .locked(locked)
+// );
+wire        CLK_SDRAM;           // 60 MHz, same as CLK_60M at phase step 0
+wire [63:0] reconfig_to_pll, reconfig_from_pll;
+
 pll pll
 (
     .refclk(CLK_50M),
     .rst(0),
     .outclk_0(CLK_60M),
-    .locked(locked)
+    .outclk_1(CLK_SDRAM),
+    .locked(locked),
+    .reconfig_to_pll(reconfig_to_pll),
+    .reconfig_from_pll(reconfig_from_pll)
 );
+
+// SDRAM clock phase. One DPS step = 1/8 VCO period = 208 ps (600 MHz VCO), 80 per
+// 60 MHz period; each manual OSD step is 5. Position 0 reproduces the old fixed clock.
+// OSD Auto: upl_rom sweeps all 80 after each ROM load and requests the centre of the
+// widest clean window; each request is acked by flipping ph_tgl, moved or not.
+wire        cfg_waitrequest;
+reg         cfg_write = 1'b0;
+reg   [5:0] cfg_address;
+reg  [31:0] cfg_data;
+
+pll_cfg pll_cfg
+(
+    .mgmt_clk(CLK_50M),
+    .mgmt_reset(1'b0),
+    .mgmt_waitrequest(cfg_waitrequest),
+    .mgmt_read(1'b0),
+    .mgmt_readdata(),
+    .mgmt_write(cfg_write),
+    .mgmt_address(cfg_address),
+    .mgmt_writedata(cfg_data),
+    .reconfig_to_pll(reconfig_to_pll),
+    .reconfig_from_pll(reconfig_from_pll)
+);
+
+reg   [3:0] ph_s1 = 4'd0, ph_s2 = 4'd0;
+reg   [6:0] ph_cur = 7'd0, ph_tgt = 7'd0;
+reg   [2:0] ph_st = 3'd0;
+reg   [3:0] ph_dly = 4'd0;
+reg         ph_tgl = 1'b0;      // flips once per completed phase move
+wire        ph_auto = (status[31:28] == 4'd0);
+wire  [6:0] cal_ph;
+wire        cal_tgl, cal_hold;
+reg   [2:0] rq_s = 3'd0;
+reg         rq_pend = 1'b0;
+reg   [6:0] rq_val = 7'd0;
+wire        ph_auto50 = (ph_s2 == 4'd0);
+wire  [3:0] ph_km1 = ph_s2 - 4'd1;
+wire  [6:0] man_want = {1'b0, ph_km1, 2'b00} + {3'd0, ph_km1};
+wire  [6:0] ph_want = ph_auto50 ? rq_val : man_want;
+wire        ph_go   = ph_auto50 ? rq_pend : (man_want != ph_cur);
+
+always @(posedge CLK_50M) begin
+    ph_s1 <= status[31:28];
+    ph_s2 <= ph_s1;
+    if (cfg_write) begin
+        if (!cfg_waitrequest) cfg_write <= 1'b0;   // held until accepted
+    end else begin
+        case (ph_st)
+            3'd0: if (!cfg_waitrequest && ph_go) begin
+                if (ph_auto50) rq_pend <= 1'b0;
+                if (ph_want == ph_cur) ph_tgl <= ~ph_tgl;   // already there: ack only
+                else begin
+                    ph_tgt <= ph_want;
+                    cfg_address <= 6'd0; cfg_data <= 32'd0; cfg_write <= 1'b1;   // waitrequest mode
+                    ph_st <= 3'd1;
+                end
+            end
+            3'd1: begin   // DPS: [15:0] shifts, [20:16] counter C1, [21] up
+                cfg_address <= 6'd6;
+                cfg_data    <= (ph_tgt > ph_cur) ? {10'd0, 1'b1, 5'd1, 9'd0, ph_tgt - ph_cur}
+                                                 : {10'd0, 1'b0, 5'd1, 9'd0, ph_cur - ph_tgt};
+                cfg_write   <= 1'b1;
+                ph_st <= 3'd2;
+            end
+            3'd2: begin
+                cfg_address <= 6'd2; cfg_data <= 32'd0; cfg_write <= 1'b1;   // start
+                ph_dly <= 4'd0;
+                ph_st <= 3'd3;
+            end
+            3'd3: begin   // give waitrequest time to rise before trusting it low
+                ph_dly <= ph_dly + 4'd1;
+                if (&ph_dly) ph_st <= 3'd4;
+            end
+            3'd4: if (!cfg_waitrequest) begin
+                ph_cur <= ph_tgt;
+                ph_tgl <= ~ph_tgl;
+                ph_st  <= 3'd0;
+            end
+            default: ph_st <= 3'd0;
+        endcase
+    end
+    // Calibration request from the SDRAM domain; cal_ph is stable before the toggle.
+    rq_s <= {rq_s[1:0], cal_tgl};
+    if (rq_s[2] ^ rq_s[1]) begin rq_pend <= 1'b1; rq_val <= cal_ph; end
+end
+
+// Phase moved: re-measure the read latch in the SDRAM domain.
+reg [2:0] ph_tgl_s = 3'd0;
+always @(posedge CLK_60M) ph_tgl_s <= {ph_tgl_s[1:0], ph_tgl};
+wire rd_recal = ph_tgl_s[2] ^ ph_tgl_s[1];
 
 assign CLK_VIDEO = CLK_60M;
 
-wire reset = RESET | status[0] | buttons[1] | ioctl_download;
+// DIAG-REVERT-2026-10-13: original below — cal_hold keeps the game in reset through the phase sweep
+// wire reset = RESET | status[0] | buttons[1] | ioctl_download;
+wire reset = RESET | status[0] | buttons[1] | ioctl_download | cal_hold;
 
 // SDRAM power-on reset. Must exclude ioctl_download: a reset including it holds the
 // load FSM idle for the whole transfer and no byte lands. High ~15 cycles, then low.
@@ -372,10 +480,46 @@ UPLFramebuffer uplframebuffer_inst
 
 	.rd_auto(rd_auto),
 	.rd_mode(rd_mode),
+	// DIAG-REVERT-2026-10-13: rd_recal added
+	.rd_recal(rd_recal),
+	// DIAG-REVERT-2026-10-13: calibration ports added
+	.ph_auto(ph_auto),
+	.ld_hold(status[0]),
+	.ph_req_val(cal_ph),
+	.ph_req_tgl(cal_tgl),
+	.cal_hold(cal_hold),
 
 	.SDRAM_DQ(SDRAM_DQ), .SDRAM_A(SDRAM_A), .SDRAM_DQML(SDRAM_DQML), .SDRAM_DQMH(SDRAM_DQMH),
 	.SDRAM_BA(SDRAM_BA), .SDRAM_nCS(SDRAM_nCS), .SDRAM_nWE(SDRAM_nWE), .SDRAM_nRAS(SDRAM_nRAS),
-	.SDRAM_nCAS(SDRAM_nCAS), .SDRAM_CKE(SDRAM_CKE), .SDRAM_CLK(SDRAM_CLK)
+	// DIAG-REVERT-2026-10-13: original below — SDRAM_CLK now comes from CLK_SDRAM, not the core's CLK_60M altddio
+	// .SDRAM_nCAS(SDRAM_nCAS), .SDRAM_CKE(SDRAM_CKE), .SDRAM_CLK(SDRAM_CLK)
+	.SDRAM_nCAS(SDRAM_nCAS), .SDRAM_CKE(SDRAM_CKE), .SDRAM_CLK()
+);
+
+// DIAG-REVERT-2026-10-13: SDRAM_CLK driver added. Same inverted DDR output as sdram.sv's, on CLK_SDRAM.
+altddio_out
+#(
+	.extend_oe_disable("OFF"),
+	.intended_device_family("Cyclone V"),
+	.invert_output("OFF"),
+	.lpm_hint("UNUSED"),
+	.lpm_type("altddio_out"),
+	.oe_reg("UNREGISTERED"),
+	.power_up_high("OFF"),
+	.width(1)
+)
+sdramclk_ddr
+(
+	.datain_h(1'b0),
+	.datain_l(1'b1),
+	.outclock(CLK_SDRAM),
+	.dataout(SDRAM_CLK),
+	.aclr(1'b0),
+	.aset(1'b0),
+	.oe(1'b1),
+	.outclocken(1'b1),
+	.sclr(1'b0),
+	.sset(1'b0)
 );
 
 

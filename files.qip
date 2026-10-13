@@ -24,5 +24,3 @@ set_global_assignment -name VHDL_FILE rtl/ram_rom/spram.vhd
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ram_rom/sdram.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/ram_rom/upl_rom.sv
 
-set_global_assignment -name VERILOG_FILE rtl/pll.v
-set_global_assignment -name VERILOG_FILE rtl/pll/pll_0002.v
