@@ -87,7 +87,6 @@ localparam CONF_STR = {
 	"P3OR,Autosave Hiscores,Off,On;",
 	"-;",
 	"OJL,SDRAM Rd Latch,Auto,Normal,Early,Late,Later;",
-	// DIAG-REVERT-2026-10-13: SDRAM clock phase sweep option added
 	"OSV,SDRAM Clk Phase,Auto,0.0ns,1.0ns,2.1ns,3.1ns,4.2ns,5.2ns,6.3ns,7.3ns,8.3ns,9.4ns,10.4ns,11.5ns,12.5ns,13.5ns,14.6ns;",
 	"-;",
 	"DIP;",
@@ -156,14 +155,6 @@ hps_io #(.CONF_STR(CONF_STR)) hps_io
 wire CLK_60M;
 wire locked;
 
-// DIAG-REVERT-2026-10-13: original PLL instance commented out below
-// pll pll
-// (
-//     .refclk(CLK_50M),
-//     .rst(0),
-//     .outclk_0(CLK_60M),
-//     .locked(locked)
-// );
 wire        CLK_SDRAM;           // 60 MHz, same as CLK_60M at phase step 0
 wire [63:0] reconfig_to_pll, reconfig_from_pll;
 
@@ -270,8 +261,7 @@ wire rd_recal = ph_tgl_s[2] ^ ph_tgl_s[1];
 
 assign CLK_VIDEO = CLK_60M;
 
-// DIAG-REVERT-2026-10-13: original below — cal_hold keeps the game in reset through the phase sweep
-// wire reset = RESET | status[0] | buttons[1] | ioctl_download;
+// cal_hold keeps the game in reset through the phase sweep
 wire reset = RESET | status[0] | buttons[1] | ioctl_download | cal_hold;
 
 // SDRAM power-on reset. Must exclude ioctl_download: a reset including it holds the
@@ -480,9 +470,7 @@ UPLFramebuffer uplframebuffer_inst
 
 	.rd_auto(rd_auto),
 	.rd_mode(rd_mode),
-	// DIAG-REVERT-2026-10-13: rd_recal added
 	.rd_recal(rd_recal),
-	// DIAG-REVERT-2026-10-13: calibration ports added
 	.ph_auto(ph_auto),
 	.ld_hold(status[0]),
 	.ph_req_val(cal_ph),
@@ -491,12 +479,11 @@ UPLFramebuffer uplframebuffer_inst
 
 	.SDRAM_DQ(SDRAM_DQ), .SDRAM_A(SDRAM_A), .SDRAM_DQML(SDRAM_DQML), .SDRAM_DQMH(SDRAM_DQMH),
 	.SDRAM_BA(SDRAM_BA), .SDRAM_nCS(SDRAM_nCS), .SDRAM_nWE(SDRAM_nWE), .SDRAM_nRAS(SDRAM_nRAS),
-	// DIAG-REVERT-2026-10-13: original below — SDRAM_CLK now comes from CLK_SDRAM, not the core's CLK_60M altddio
-	// .SDRAM_nCAS(SDRAM_nCAS), .SDRAM_CKE(SDRAM_CKE), .SDRAM_CLK(SDRAM_CLK)
+	// SDRAM_CLK is driven from CLK_SDRAM below
 	.SDRAM_nCAS(SDRAM_nCAS), .SDRAM_CKE(SDRAM_CKE), .SDRAM_CLK()
 );
 
-// DIAG-REVERT-2026-10-13: SDRAM_CLK driver added. Same inverted DDR output as sdram.sv's, on CLK_SDRAM.
+// SDRAM_CLK: same inverted DDR output as sdram.sv's, on the phase-steppable CLK_SDRAM.
 altddio_out
 #(
 	.extend_oe_disable("OFF"),

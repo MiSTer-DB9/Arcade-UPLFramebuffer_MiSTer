@@ -17,9 +17,8 @@ module upl_rom
     // by measurement; rd_mode is the manual override and the fallback.
     input                rd_auto,       // 1 = use the detected latch when detection succeeded
     input          [1:0] rd_mode,       // 0 = Early, 1 = Normal, 2 = Late
-    // DIAG-REVERT-2026-10-13: recal added — pulse re-runs the latch probe (SDRAM clock phase moved)
+    // pulse: SDRAM clock phase moved, re-run the latch probe
     input                recal,
-    // DIAG-REVERT-2026-10-13: SDRAM clock phase calibration ports added
     input                ph_auto,       // OSD phase = Auto: sweep after each ROM load
     input                ld_hold,       // status[0]: Main holds it across the whole MRA load
     output reg     [6:0] ph_req_val,    // requested DPS position 0-79 (208 ps steps)
@@ -363,17 +362,14 @@ module upl_rom
         end
     end
 
-    // ---- SDRAM clock phase calibration (DIAG-REVERT-2026-10-13: whole section added) ----
+    // ---- SDRAM clock phase calibration ----
     // The char ROM (index 2, SDRAM 0x000000, 32K in every set) is checksummed as it
     // downloads. Once the load has gone quiet, all 80 DPS positions are tried: the
     // region is read back at each, checksummed at all four latch points, and the
     // position passes for a latch when that checksum matches. The centre of the
     // widest passing run (circular, per latch) is requested. Nothing passes -> 0,
     // the pre-calibration clock. The latch probe re-runs on the final move.
-    // DIAG-REVERT-2026-10-13b: Fletcher-32 replaced by CRC-32, originals commented below. A wrong latch
-    // returns each 4-word burst rotated, which additive sums can cancel on regular data.
-    // reg  [31:0] ref_s1, ref_s2;
-    // wire [31:0] ref_s1n = ref_s1 + {16'd0, ref_w16};
+    // CRC-32: a wrong latch returns each 4-word burst rotated, which additive sums can miss.
     function automatic [31:0] crc_step(input [31:0] c, input [15:0] d);   // CRC-32 0x04C11DB7
         integer i;
         reg [31:0] r;
@@ -391,10 +387,8 @@ module upl_rom
     wire        ref_ok  = (ref_cnt[14:10] != 5'd0);    // at least 1K words
     always_ff @(posedge clk) begin
         if (dl_byte && (ioctl_index == IDX_CHAR) && (ioctl_addr[23:0] == 24'd0)) begin
-            // ref_s1 <= 32'd0; ref_s2 <= 32'd0; ref_cnt <= 15'd0;
             ref_crc <= 32'hFFFFFFFF; ref_cnt <= 15'd0;
         end else if (ref_wd) begin
-            // ref_s1 <= ref_s1n; ref_s2 <= ref_s2 + ref_s1n; ref_cnt <= ref_cnt + 15'd1;
             ref_crc <= crc_step(ref_crc, ref_w16); ref_cnt <= ref_cnt + 15'd1;
         end
     end
@@ -410,9 +404,6 @@ module upl_rom
     reg  [20:0] cal_quiet;
     reg   [1:0] cal_dly;
     reg  [15:0] cal_e, cal_n, cal_l;
-    // DIAG-REVERT-2026-10-13b: original below
-    // reg  [31:0] cs1 [0:3];
-    // reg  [31:0] cs2 [0:3];
     reg  [31:0] cs_crc [0:3];
     // Run trackers per latch (0 Early, 1 Normal, 2 Late, 3 Later).
     reg   [6:0] t_cur [0:3], t_curs [0:3], t_first [0:3], t_best [0:3], t_bests [0:3];
@@ -426,11 +417,6 @@ module upl_rom
     assign cal_cw[2] = cal_l;     // completion +1
     assign cal_cw[3] = sd_dout;   // completion +2 (valid when cal_dly == 1)
 
-    // DIAG-REVERT-2026-10-13b: original below
-    // wire [3:0] cal_pass = {(cs1[3] == ref_s1) && (cs2[3] == ref_s2),
-    //                        (cs1[2] == ref_s1) && (cs2[2] == ref_s2),
-    //                        (cs1[1] == ref_s1) && (cs2[1] == ref_s2),
-    //                        (cs1[0] == ref_s1) && (cs2[0] == ref_s2)};
     wire [3:0] cal_pass = {cs_crc[3] == ref_crc, cs_crc[2] == ref_crc,
                            cs_crc[1] == ref_crc, cs_crc[0] == ref_crc};
 
@@ -460,8 +446,6 @@ module upl_rom
         if (pk_mid >= 8'd80) pk_mid = pk_mid - 8'd80;
     end
 
-    // DIAG-REVERT-2026-10-13: original below
-    // reg         probing, sd_probe, det_ok, dl_d;
     reg         probing, sd_probe, det_ok, dl_d, prb_req;
     reg   [1:0] prb_dly;
     reg   [1:0] prb_ph, rd_det;
@@ -478,16 +462,13 @@ module upl_rom
 
     wire [15:0] sd_dout_sel = (rd_sel == RD_EARLY) ? sd_dout_d1 : sd_dout;
 
-    // DIAG-REVERT-2026-10-13: original below — cal_busy holds the HPS while an aborted sweep restores the phase
-    // assign ioctl_wait = sd_busy || (ioctl_wr && in_sdram);
+    // cal_busy holds the HPS while an aborted sweep restores the phase
     assign ioctl_wait = sd_busy || (ioctl_wr && in_sdram) || cal_busy;
 
     // A hit needs no SDRAM cycle, so it can be served while another client's read is
     // in flight. rd_q/ack_r are shared: one ack per cycle, and a completion wins.
     wire sd_complete = sd_busy && sd_ready && !sd_rd && !sd_wr;
     wire comp_ack    = (sd_complete && sd_was_rd && (rd_sel < RD_LATE)) || rd_pend;
-    // DIAG-REVERT-2026-10-13: original below
-    // wire serve_hit   = c_hit && !comp_ack && !ack_r[pick] && !ioctl_download && !probing;
     wire serve_hit   = c_hit && !comp_ack && !ack_r[pick] && !ioctl_download && !probing && !cal_busy;
 
     always_ff @(posedge clk) begin
@@ -498,10 +479,7 @@ module upl_rom
             sd_refresh_cnt <= 9'd0; sd_old_ready <= 1'b1; wr_pend <= 1'b0; ack_r <= 6'd0;
             rd_pend <= 1'b0;
             probing <= 1'b0; sd_probe <= 1'b0; prb_dly <= 2'd0; det_ok <= 1'b0;
-            // DIAG-REVERT-2026-10-13: original below
-            // rd_cnt <= 2'd0; dl_d <= 1'b0;
             rd_cnt <= 2'd0; dl_d <= 1'b0; prb_req <= 1'b0;
-            // DIAG-REVERT-2026-10-13: calibration state init added
             cal_st <= CS_IDLE; cal_busy <= 1'b0; cal_pend <= 1'b0; cal_fin <= 1'b0;
             cal_abrt <= 1'b0; cal_inflight <= 1'b0; sd_cal <= 1'b0; cal_dly <= 2'd0;
             cal_home <= 7'd0; cal_quiet <= 21'd0; ph_auto_d <= 1'b0; cal_to <= 22'd0;
@@ -515,16 +493,10 @@ module upl_rom
             // Probe once the download's last write has drained. Re-running on every
             // download pulse just re-confirms the same answer.
             dl_d <= ioctl_download;
-            // DIAG-REVERT-2026-10-13: original block commented out below
-            // if (dl_d && !ioctl_download && ref_vld && !wr_pend && !sd_busy) begin
-            //     probing <= 1'b1; prb_ph <= 2'd0; prb_ok <= 4'hF; prb_to <= 16'd0;
-            // end
             // Request is held until it can start: firing only on the download's falling
             // edge silently skipped the probe whenever the bus was busy on that cycle.
             // The probe read itself still waits for !sd_busy in the issue branch below.
             if ((dl_d && !ioctl_download) || recal) prb_req <= 1'b1;
-            // DIAG-REVERT-2026-10-13: original below
-            // else if (prb_req && ref_vld && !probing && !ioctl_download) begin
             else if (prb_req && ref_vld && !probing && !ioctl_download && !cal_busy) begin
                 prb_req <= 1'b0;
                 probing <= 1'b1; prb_ph <= 2'd0; prb_ok <= 4'hF; prb_to <= 16'd0;
@@ -536,7 +508,7 @@ module upl_rom
                 end
             end
 
-            // ---- phase calibration (DIAG-REVERT-2026-10-13: block added) ----
+            // ---- phase calibration ----
             ph_auto_d <= ph_auto;
             cal_quiet <= (ioctl_download || ld_hold) ? 21'd0 : (cal_quiet + {20'd0, ~&cal_quiet});
             if (ref_wd || (ph_auto && !ph_auto_d)) cal_pend <= 1'b1;
@@ -583,8 +555,7 @@ module upl_rom
                         cal_set <= cal_set + 8'd1;
                         if (&cal_set) begin
                             cal_w <= 15'd0;
-                            // for (li = 0; li < 4; li = li + 1) begin cs1[li] <= 32'd0; cs2[li] <= 32'd0; end
-                            for (li = 0; li < 4; li = li + 1) cs_crc[li] <= 32'hFFFFFFFF;   // DIAG-REVERT-2026-10-13b
+                            for (li = 0; li < 4; li = li + 1) cs_crc[li] <= 32'hFFFFFFFF;
                             cal_st <= CS_READ;
                         end
                     end
@@ -649,7 +620,7 @@ module upl_rom
                         if (sd_probe) begin
                             prb_e <= sd_dout_d1; prb_n <= sd_dout;
                             prb_dly <= 2'd2; sd_probe <= 1'b0;
-                        // DIAG-REVERT-2026-10-13: calibration read capture added
+                        // calibration read capture
                         end else if (sd_cal) begin
                             cal_e <= sd_dout_d1; cal_n <= sd_dout;
                             cal_dly <= 2'd2; sd_cal <= 1'b0;
@@ -678,7 +649,6 @@ module upl_rom
                     wr_pend  <= (ioctl_wr && in_sdram);
                 // !ack_r[pick] && !c_hit: never fetch for a client whose ack is already
                 // up or is being served from cache, or its next read is one fetch stale.
-                // DIAG-REVERT-2026-10-13: calibration read issue added
                 end else if ((cal_st == CS_READ) && cal_busy && !cal_inflight && (cal_w != ref_cnt) && !rd_pend) begin
                     sd_addr   <= {11'd0, cal_w};   // SDR_CHAR is word 0
                     sd_rd     <= 1; sd_busy <= 1; sd_was_rd <= 1; sd_cal <= 1; cal_inflight <= 1;
@@ -686,8 +656,6 @@ module upl_rom
                     sd_addr   <= {3'd0, ref_wa + {21'd0, prb_ph}};
                     prb_wd    <= ref_w[prb_ph];
                     sd_rd     <= 1; sd_busy <= 1; sd_was_rd <= 1; sd_probe <= 1;
-                // DIAG-REVERT-2026-10-13: original below
-                // end else if (pick_v && !ioctl_download && !probing && !rd_pend && !ack_r[pick] && !c_hit) begin
                 end else if (pick_v && !ioctl_download && !probing && !cal_busy && !rd_pend && !ack_r[pick] && !c_hit) begin
                     sd_addr   <= {3'd0, cli_byte[23:1]};
                     sd_lsb    <= cli_byte[0];
@@ -727,16 +695,11 @@ module upl_rom
                 end else prb_ph <= prb_ph + 2'd1;
             end
 
-            // DIAG-REVERT-2026-10-13: calibration sample pipeline added
+            // calibration sample pipeline
             if (cal_dly == 2'd2) begin
                 cal_l   <= sd_dout;          // completion +1
                 cal_dly <= 2'd1;
             end else if (cal_dly == 2'd1) begin
-                // DIAG-REVERT-2026-10-13b: original below
-                // for (li = 0; li < 4; li = li + 1) begin
-                //     cs1[li] <= cs1[li] + {16'd0, cal_cw[li]};
-                //     cs2[li] <= cs2[li] + cs1[li] + {16'd0, cal_cw[li]};
-                // end
                 for (li = 0; li < 4; li = li + 1) cs_crc[li] <= crc_step(cs_crc[li], cal_cw[li]);
                 cal_dly <= 2'd0; cal_inflight <= 1'b0; cal_w <= cal_w + 15'd1;
             end
@@ -750,8 +713,6 @@ module upl_rom
             end
 
             // ROM never changes underneath us, so a download is the only invalidation.
-            // DIAG-REVERT-2026-10-13: original below
-            // if (ioctl_download)
             if (ioctl_download || recal)   // recal: words cached at the old phase may be bad
                 for (ci = 0; ci < 6; ci = ci + 1) c_vld[ci] <= 2'd0;
         end

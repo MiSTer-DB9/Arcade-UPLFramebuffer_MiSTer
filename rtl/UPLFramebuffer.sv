@@ -47,9 +47,7 @@ module UPLFramebuffer
 
     input                rd_auto,        // 1 = use the measured SDRAM read latch
     input          [1:0] rd_mode,        // manual override / fallback: 0=Early 1=Normal 2=Late
-    // DIAG-REVERT-2026-10-13: rd_recal added
     input                rd_recal,       // pulse: SDRAM clock phase moved, re-measure the latch
-    // DIAG-REVERT-2026-10-13: SDRAM clock phase calibration ports added
     input                ph_auto,        // phase calibration enabled (OSD Auto)
     input                ld_hold,        // status[0], held across the MRA load
     output         [6:0] ph_req_val,     // requested DPS position
@@ -110,9 +108,7 @@ upl_rom rom
     .por_reset(por_reset),
     .rd_auto(rd_auto),
     .rd_mode(rd_mode),
-    // DIAG-REVERT-2026-10-13: recal added
     .recal(rd_recal),
-    // DIAG-REVERT-2026-10-13: calibration ports added
     .ph_auto(ph_auto),
     .ld_hold(ld_hold),
     .ph_req_val(ph_req_val),
