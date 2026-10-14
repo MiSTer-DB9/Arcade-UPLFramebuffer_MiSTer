@@ -370,17 +370,32 @@ module upl_rom
     // position passes for a latch when that checksum matches. The centre of the
     // widest passing run (circular, per latch) is requested. Nothing passes -> 0,
     // the pre-calibration clock. The latch probe re-runs on the final move.
-    reg  [31:0] ref_s1, ref_s2;
+    // DIAG-REVERT-2026-10-13b: Fletcher-32 replaced by CRC-32, originals commented below. A wrong latch
+    // returns each 4-word burst rotated, which additive sums can cancel on regular data.
+    // reg  [31:0] ref_s1, ref_s2;
+    // wire [31:0] ref_s1n = ref_s1 + {16'd0, ref_w16};
+    function automatic [31:0] crc_step(input [31:0] c, input [15:0] d);   // CRC-32 0x04C11DB7
+        integer i;
+        reg [31:0] r;
+        begin
+            r = c;
+            for (i = 15; i >= 0; i = i - 1)
+                r = {r[30:0], 1'b0} ^ ((r[31] ^ d[i]) ? 32'h04C11DB7 : 32'd0);
+            crc_step = r;
+        end
+    endfunction
+    reg  [31:0] ref_crc;
     reg  [14:0] ref_cnt;
     wire [15:0] ref_w16 = {ioctl_data, dl_blk[7:0]};   // odd byte arriving, even byte before it
-    wire [31:0] ref_s1n = ref_s1 + {16'd0, ref_w16};
     wire        ref_wd  = dl_byte && (ioctl_index == IDX_CHAR) && ioctl_addr[0] && !ref_cnt[14];
     wire        ref_ok  = (ref_cnt[14:10] != 5'd0);    // at least 1K words
     always_ff @(posedge clk) begin
         if (dl_byte && (ioctl_index == IDX_CHAR) && (ioctl_addr[23:0] == 24'd0)) begin
-            ref_s1 <= 32'd0; ref_s2 <= 32'd0; ref_cnt <= 15'd0;
+            // ref_s1 <= 32'd0; ref_s2 <= 32'd0; ref_cnt <= 15'd0;
+            ref_crc <= 32'hFFFFFFFF; ref_cnt <= 15'd0;
         end else if (ref_wd) begin
-            ref_s1 <= ref_s1n; ref_s2 <= ref_s2 + ref_s1n; ref_cnt <= ref_cnt + 15'd1;
+            // ref_s1 <= ref_s1n; ref_s2 <= ref_s2 + ref_s1n; ref_cnt <= ref_cnt + 15'd1;
+            ref_crc <= crc_step(ref_crc, ref_w16); ref_cnt <= ref_cnt + 15'd1;
         end
     end
 
@@ -395,8 +410,10 @@ module upl_rom
     reg  [20:0] cal_quiet;
     reg   [1:0] cal_dly;
     reg  [15:0] cal_e, cal_n, cal_l;
-    reg  [31:0] cs1 [0:3];
-    reg  [31:0] cs2 [0:3];
+    // DIAG-REVERT-2026-10-13b: original below
+    // reg  [31:0] cs1 [0:3];
+    // reg  [31:0] cs2 [0:3];
+    reg  [31:0] cs_crc [0:3];
     // Run trackers per latch (0 Early, 1 Normal, 2 Late, 3 Later).
     reg   [6:0] t_cur [0:3], t_curs [0:3], t_first [0:3], t_best [0:3], t_bests [0:3];
     reg   [3:0] t_open;
@@ -409,10 +426,13 @@ module upl_rom
     assign cal_cw[2] = cal_l;     // completion +1
     assign cal_cw[3] = sd_dout;   // completion +2 (valid when cal_dly == 1)
 
-    wire [3:0] cal_pass = {(cs1[3] == ref_s1) && (cs2[3] == ref_s2),
-                           (cs1[2] == ref_s1) && (cs2[2] == ref_s2),
-                           (cs1[1] == ref_s1) && (cs2[1] == ref_s2),
-                           (cs1[0] == ref_s1) && (cs2[0] == ref_s2)};
+    // DIAG-REVERT-2026-10-13b: original below
+    // wire [3:0] cal_pass = {(cs1[3] == ref_s1) && (cs2[3] == ref_s2),
+    //                        (cs1[2] == ref_s1) && (cs2[2] == ref_s2),
+    //                        (cs1[1] == ref_s1) && (cs2[1] == ref_s2),
+    //                        (cs1[0] == ref_s1) && (cs2[0] == ref_s2)};
+    wire [3:0] cal_pass = {cs_crc[3] == ref_crc, cs_crc[2] == ref_crc,
+                           cs_crc[1] == ref_crc, cs_crc[0] == ref_crc};
 
     // Widest run per latch, including one that wraps 79 -> 0.
     reg  [6:0] pk_len [0:3];
@@ -563,7 +583,8 @@ module upl_rom
                         cal_set <= cal_set + 8'd1;
                         if (&cal_set) begin
                             cal_w <= 15'd0;
-                            for (li = 0; li < 4; li = li + 1) begin cs1[li] <= 32'd0; cs2[li] <= 32'd0; end
+                            // for (li = 0; li < 4; li = li + 1) begin cs1[li] <= 32'd0; cs2[li] <= 32'd0; end
+                            for (li = 0; li < 4; li = li + 1) cs_crc[li] <= 32'hFFFFFFFF;   // DIAG-REVERT-2026-10-13b
                             cal_st <= CS_READ;
                         end
                     end
@@ -711,10 +732,12 @@ module upl_rom
                 cal_l   <= sd_dout;          // completion +1
                 cal_dly <= 2'd1;
             end else if (cal_dly == 2'd1) begin
-                for (li = 0; li < 4; li = li + 1) begin
-                    cs1[li] <= cs1[li] + {16'd0, cal_cw[li]};
-                    cs2[li] <= cs2[li] + cs1[li] + {16'd0, cal_cw[li]};
-                end
+                // DIAG-REVERT-2026-10-13b: original below
+                // for (li = 0; li < 4; li = li + 1) begin
+                //     cs1[li] <= cs1[li] + {16'd0, cal_cw[li]};
+                //     cs2[li] <= cs2[li] + cs1[li] + {16'd0, cal_cw[li]};
+                // end
+                for (li = 0; li < 4; li = li + 1) cs_crc[li] <= crc_step(cs_crc[li], cal_cw[li]);
                 cal_dly <= 2'd0; cal_inflight <= 1'b0; cal_w <= cal_w + 15'd1;
             end
 
