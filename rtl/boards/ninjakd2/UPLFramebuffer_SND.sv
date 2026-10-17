@@ -27,12 +27,22 @@ module UPLFramebuffer_SND
     output               pcm_cmd_wr,
 
 
-    output signed [15:0] sound_out
+    output signed [15:0] sound_out,
+
+    // ---- shared sound Z80 + YM2203 pair (rtl/UPLFramebuffer.sv)
+    output chip_pool_pkg::z80r_i_t         z80_i,
+    input  chip_pool_pkg::z80_o_t          z80_o,
+    output chip_pool_pkg::ym2203_i_t [1:0] ym_i,
+    input  chip_pool_pkg::ym2203_o_t [1:0] ym_o
 );
 
-    wire [15:0] A;
-    wire  [7:0] cpu_dout;
-    wire        mreq_n, iorq_n, rd_n, wr_n, m1_n;
+    wire [15:0] A        = z80_o.a;
+    wire  [7:0] cpu_dout = z80_o.dout;
+    wire        mreq_n   = z80_o.mreq_n;
+    wire        iorq_n   = z80_o.iorq_n;
+    wire        rd_n     = z80_o.rd_n;
+    wire        wr_n     = z80_o.wr_n;
+    wire        m1_n     = z80_o.m1_n;
 
     wire mem_wr = ~mreq_n & ~wr_n;
     wire io_wr  = ~iorq_n & ~wr_n & m1_n;   // m1_n excludes the interrupt-ack cycle
@@ -112,51 +122,29 @@ module UPLFramebuffer_SND
     wire ym1_wr = ym1_sel & ~ym1_sel_d & ~reset;
     wire ym2_wr = ym2_sel & ~ym2_sel_d & ~reset;
 
-    wire [7:0] ym1_dout, ym2_dout;
-    wire       ym1_irq_n;
-    wire signed [15:0] ym1_snd, ym2_snd;
+    assign ym_i[0].rst    = reset;
+    assign ym_i[0].ce     = cen_ym;
+    assign ym_i[0].cs_n   = ~ym1_wr;
+    assign ym_i[0].wr_n   = ~ym1_wr;
+    assign ym_i[0].addr   = A[0];
+    assign ym_i[0].din    = cpu_dout;
+    assign ym_i[0].ioa_in = 8'hFF;
+    assign ym_i[0].iob_in = 8'hFF;
 
-    jt03 ym2203_1
-    (
-        .rst    (reset),
-        .clk    (clk),
-        .cen    (cen_ym),
-        .din    (cpu_dout),
-        .addr   (A[0]),
-        .cs_n   (~ym1_wr),
-        .wr_n   (~ym1_wr),
-        .dout   (ym1_dout),
-        .irq_n  (ym1_irq_n),
-        .IOA_in (8'hFF),
-        .IOB_in (8'hFF),
-        .IOA_out(), .IOB_out(), .IOA_oe(), .IOB_oe(),
-        .psg_A  (), .psg_B  (), .psg_C  (),
-        .fm_snd (), .psg_snd(),
-        .snd    (ym1_snd),
-        .snd_sample(),
-        .debug_view()
-    );
+    assign ym_i[1].rst    = reset;
+    assign ym_i[1].ce     = cen_ym;
+    assign ym_i[1].cs_n   = ~ym2_wr;
+    assign ym_i[1].wr_n   = ~ym2_wr;
+    assign ym_i[1].addr   = A[0];
+    assign ym_i[1].din    = cpu_dout;
+    assign ym_i[1].ioa_in = 8'hFF;
+    assign ym_i[1].iob_in = 8'hFF;
 
-    jt03 ym2203_2
-    (
-        .rst    (reset),
-        .clk    (clk),
-        .cen    (cen_ym),
-        .din    (cpu_dout),
-        .addr   (A[0]),
-        .cs_n   (~ym2_wr),
-        .wr_n   (~ym2_wr),
-        .dout   (ym2_dout),
-        .irq_n  (),                      // chip 2 does not drive the IRQ line
-        .IOA_in (8'hFF),
-        .IOB_in (8'hFF),
-        .IOA_out(), .IOB_out(), .IOA_oe(), .IOB_oe(),
-        .psg_A  (), .psg_B  (), .psg_C  (),
-        .fm_snd (), .psg_snd(),
-        .snd    (ym2_snd),
-        .snd_sample(),
-        .debug_view()
-    );
+    wire  [7:0] ym1_dout  = ym_o[0].dout;
+    wire  [7:0] ym2_dout  = ym_o[1].dout;
+    wire        ym1_irq_n = ym_o[0].irq_n;   // chip 2 does not drive the IRQ line
+    wire signed [15:0] ym1_snd = ym_o[0].snd;
+    wire signed [15:0] ym2_snd = ym_o[1].snd;
 
     // Mix. jt03's snd already carries jotego's FM/SSG balance, so just sum and halve.
 
@@ -179,23 +167,10 @@ module UPLFramebuffer_SND
         else                                     cpu_din = 8'hFF;
     end
 
-    T80s cpu
-    (
-        .RESET_n(~reset),
-        .CLK(clk),
-        .CEN(cen_cpu & ~pause),
-        .WAIT_n(1'b1),
-        .INT_n(ym1_irq_n),
-        .NMI_n(1'b1),
-        .BUSRQ_n(1'b1),
-        .M1_n(m1_n),
-        .MREQ_n(mreq_n),
-        .IORQ_n(iorq_n),
-        .RD_n(rd_n),
-        .WR_n(wr_n),
-        .A(A),
-        .DI(cpu_din),
-        .DO(cpu_dout)
-    );
+    assign z80_i.reset_n = ~reset;
+    assign z80_i.ce      = cen_cpu & ~pause;
+    assign z80_i.int_n   = ym1_irq_n;
+    assign z80_i.nmi_n   = 1'b1;
+    assign z80_i.di      = cpu_din;
 
 endmodule

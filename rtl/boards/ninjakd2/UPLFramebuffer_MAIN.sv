@@ -49,12 +49,20 @@ module UPLFramebuffer_MAIN
     input         [12:0] work_addr,      output  [7:0] work_data,   // sprite RAM lives at 1A00-1FFF
     input          [9:0] pal_index,      output [15:0] pal_rgb,
 
-    input                vblank             // from VIDEO; rising edge raises the IRQ
+    input                vblank,            // from VIDEO; rising edge raises the IRQ
+
+    // ---- shared main Z80 (rtl/UPLFramebuffer.sv)
+    output chip_pool_pkg::z80r_i_t z80_i,
+    input  chip_pool_pkg::z80_o_t  z80_o
 );
 
-    wire [15:0] A;
-    wire  [7:0] cpu_dout;
-    wire        mreq_n, iorq_n, rd_n, wr_n, m1_n;
+    wire [15:0] A        = z80_o.a;
+    wire  [7:0] cpu_dout = z80_o.dout;
+    wire        mreq_n   = z80_o.mreq_n;
+    wire        iorq_n   = z80_o.iorq_n;
+    wire        rd_n     = z80_o.rd_n;
+    wire        wr_n     = z80_o.wr_n;
+    wire        m1_n     = z80_o.m1_n;
 
     wire mem_wr = ~mreq_n & ~wr_n;
     wire mem_rd = ~mreq_n & ~rd_n;
@@ -360,23 +368,10 @@ module UPLFramebuffer_MAIN
         else               cpu_din = 8'hFF;
     end
 
-    T80s cpu
-    (
-        .RESET_n(~reset),
-        .CLK(clk),
-        .CEN(cen_cpu & ~pause),
-        .WAIT_n(1'b1),
-        .INT_n(~irq_pending),
-        .NMI_n(1'b1),
-        .BUSRQ_n(1'b1),
-        .M1_n(m1_n),
-        .MREQ_n(mreq_n),
-        .IORQ_n(iorq_n),
-        .RD_n(rd_n),
-        .WR_n(wr_n),
-        .A(A),
-        .DI(cpu_din),
-        .DO(cpu_dout)
-    );
+    assign z80_i.reset_n = ~reset;
+    assign z80_i.ce      = cen_cpu & ~pause;
+    assign z80_i.int_n   = ~irq_pending;
+    assign z80_i.nmi_n   = 1'b1;
+    assign z80_i.di      = cpu_din;
 
 endmodule
