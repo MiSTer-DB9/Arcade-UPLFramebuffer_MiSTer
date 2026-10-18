@@ -1,19 +1,22 @@
 set_global_assignment -name VHDL_INPUT_VERSION VHDL_2008
 
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/chip_pool_pkg.sv
 set_global_assignment -name SYSTEMVERILOG_FILE Arcade-UPLFramebuffer.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/UPLFramebuffer.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/UPLFramebuffer_MAIN.sv
 
 set_global_assignment -name QIP_FILE rtl/cpu/T80/T80.qip
 
 set_global_assignment -name QIP_FILE rtl/sound/v_sound.qip
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/sound/UPLFramebuffer_PCM.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/sound/UPLFramebuffer_MC8123.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/sound/UPLFramebuffer_SND.sv
 
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/video/UPLFramebuffer_BGLAYER.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/video/UPLFramebuffer_SPRITE.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/video/UPLFramebuffer_VIDEO.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/boards/ninjakd2/ninjakd2_board.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/boards/ninjakd2/UPLFramebuffer_MAIN.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/boards/ninjakd2/UPLFramebuffer_VIDEO.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/boards/ninjakd2/UPLFramebuffer_BGLAYER.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/boards/ninjakd2/UPLFramebuffer_SPRITE.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/boards/ninjakd2/UPLFramebuffer_SND.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/boards/ninjakd2/UPLFramebuffer_PCM.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/boards/nova2001/nova2001_board.sv
 
 set_global_assignment -name VERILOG_FILE rtl/mister_custom/hiscore.v
 set_global_assignment -name VERILOG_FILE rtl/mister_custom/nvram.v

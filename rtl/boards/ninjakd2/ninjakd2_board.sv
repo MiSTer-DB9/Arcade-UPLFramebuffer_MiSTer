@@ -1,0 +1,235 @@
+//============================================================================
+//
+//  ninjakd2_board.sv — ninjakd2.cpp hardware (Ninja-Kid II, Mutant Night, Ark Area, Atomic Robo-Kid,
+//  Omega Fighter): main board, video, sprite framebuffer, sound board and PCM. The CPUs and YM2203s
+//  are the shared pool in rtl/UPLFramebuffer.sv.
+//  Copyright (C) 2026 Rodimus
+//
+//============================================================================
+
+module ninjakd2_board
+(
+    input                clk,            // 60 MHz fabric
+    input                cen_cpu,        // 6.0 MHz  main Z80
+    input                cen_pix,        // 6.0 MHz  pixel clock
+    input                cen_snd,        // 5.0 MHz  sound Z80
+    input                cen_ym,         // 1.5 MHz  both YM2203
+    input                reset,
+    input                pause,
+
+    input          [7:0] set_id,
+
+    // ---- controls, assembled into MAME port order by the wrapper (active low)
+    input          [7:0] keycoin,
+    input          [7:0] pad1,
+    input          [7:0] pad2,
+    input          [7:0] dsw1,
+    input          [7:0] dsw2,
+
+    input                crt_flip,
+
+    // ---- ROM regions (rtl/ram_rom/upl_rom.sv)
+    output        [15:0] maincpu_addr,  output  [3:0] maincpu_bank, input  [7:0] maincpu_data,
+    output        [15:0] audiocpu_addr, output        audiocpu_m1,  input  [7:0] audiocpu_data,
+    output        [14:0] char_addr,     output char_req,  input char_ack,  input [7:0] char_data,
+    output        [18:0] tile1_addr,    output tile1_req, input tile1_ack, input [7:0] tile1_data,
+    output        [18:0] tile2_addr,    output tile2_req, input tile2_ack, input [7:0] tile2_data,
+    output        [18:0] tile3_addr,    output tile3_req, input tile3_ack, input [7:0] tile3_data,
+    output        [17:0] spr_addr,      output spr_req,   input spr_ack,   input [7:0] spr_data,
+    output        [15:0] pcm_addr,      output pcm_req,   input pcm_ack,   input [7:0] pcm_data,
+
+    // ---- video / audio
+    output               HSync, VSync,
+    output               HBlank, VBlank,
+    output         [7:0] R, G, B,
+    output signed [15:0] sound,
+
+    // ---- shared chips (rtl/UPLFramebuffer.sv)
+    output chip_pool_pkg::z80r_i_t         z80r_0_i,    // main Z80
+    input  chip_pool_pkg::z80_o_t          z80r_0_o,
+    output chip_pool_pkg::z80r_i_t         z80r_1_i,    // sound Z80
+    input  chip_pool_pkg::z80_o_t          z80r_1_o,
+    output chip_pool_pkg::ym2203_i_t [1:0] ym2203_i,
+    input  chip_pool_pkg::ym2203_o_t [1:0] ym2203_o,
+    output chip_pool_pkg::dpram_i_t        ram2k_0_i,   // fg VRAM
+    input  chip_pool_pkg::dpram_o_t        ram2k_0_o,
+    output chip_pool_pkg::dpram_i_t  [3:0] ram8k_i,     // bg VRAM x3, work RAM
+    input  chip_pool_pkg::dpram_o_t  [3:0] ram8k_o,
+    output chip_pool_pkg::dpram_i_t        ram_fb_i,    // sprite framebuffer
+    input  chip_pool_pkg::dpram_o_t        ram_fb_o
+);
+
+wire [15:0] fb_raddr;       wire [7:0] fb_rdata;       wire spr_draw_window;
+wire  [7:0] pcm_cmd;        wire pcm_cmd_wr;
+
+//------------------------------------------------------- Main board ----------------------------------------------------------//
+
+wire [7:0] sound_latch;
+wire       sound_latch_wr;
+wire       snd_reset;
+wire        flip_screen, sprite_overdraw;
+wire  [2:0] bg_layer_en;
+wire [15:0] bg0_scrollx, bg0_scrolly, bg1_scrollx, bg1_scrolly, bg2_scrollx, bg2_scrolly;
+
+wire [10:0] fg_vram_addr;  wire [7:0] fg_vram_data;
+wire [12:0] bg0_vram_addr; wire [7:0] bg0_vram_data;
+wire [12:0] bg1_vram_addr; wire [7:0] bg1_vram_data;
+wire [12:0] bg2_vram_addr; wire [7:0] bg2_vram_data;
+wire [12:0] work_addr;     wire [7:0] work_data;
+wire  [9:0] pal_index;     wire [15:0] pal_rgb;
+
+UPLFramebuffer_MAIN main_board
+(
+    .clk(clk),
+    .cen_cpu(cen_cpu),
+    .reset(reset),
+    .pause(pause),
+
+    .set_id(set_id),
+
+    .keycoin(keycoin), .pad1(pad1), .pad2(pad2), .dsw1(dsw1), .dsw2(dsw2),
+
+    .maincpu_addr(maincpu_addr), .maincpu_bank(maincpu_bank), .maincpu_data(maincpu_data),
+
+    .sound_latch(sound_latch), .sound_latch_wr(sound_latch_wr), .snd_reset(snd_reset),
+
+    .crt_flip(crt_flip),
+    .flip_screen(flip_screen),
+    .sprite_overdraw(sprite_overdraw),
+    .bg0_scrollx(bg0_scrollx), .bg0_scrolly(bg0_scrolly),
+    .bg1_scrollx(bg1_scrollx), .bg1_scrolly(bg1_scrolly),
+    .bg2_scrollx(bg2_scrollx), .bg2_scrolly(bg2_scrolly),
+    .bg_layer_en(bg_layer_en),
+
+    .fg_vram_addr(fg_vram_addr), .fg_vram_data(fg_vram_data),
+    .bg0_vram_addr(bg0_vram_addr), .bg0_vram_data(bg0_vram_data),
+    .bg1_vram_addr(bg1_vram_addr), .bg1_vram_data(bg1_vram_data),
+    .bg2_vram_addr(bg2_vram_addr), .bg2_vram_data(bg2_vram_data),
+    .work_addr(work_addr),       .work_data(work_data),
+    .pal_index(pal_index),       .pal_rgb(pal_rgb),
+
+    .vblank(VBlank),
+
+    .z80_i(z80r_0_i), .z80_o(z80r_0_o),
+    .ram2k_0_i(ram2k_0_i), .ram2k_0_o(ram2k_0_o),
+    .ram8k_i(ram8k_i), .ram8k_o(ram8k_o)
+);
+
+//------------------------------------------------------- Video ---------------------------------------------------------------//
+
+// mnight/mnightj/arkarea use an 11-bit bg tile index (ninjakd2.cpp:1047 family).
+wire bg_mnight  = (set_id >= 8'h06) && (set_id <= 8'h08);
+wire is_robokid = (set_id >= 8'h09) && (set_id <= 8'h0C);
+wire is_omegaf  = (set_id >= 8'h0D) && (set_id <= 8'h0F);
+
+// omegaf's machine_config is robokid() plus overrides, so it inherits gfx_robokid:
+// palette bases fg 0x300 / spr 0x200, col-aligned sub-tiles, 5-bit RGB. Only the
+// sprite stencil differs.
+wire gfx_robokid = is_robokid | is_omegaf;
+
+UPLFramebuffer_VIDEO video
+(
+    .clk(clk),
+    .cen_pix(cen_pix),
+    .reset(reset),
+
+    .flip_screen(flip_screen),
+    .bg_mnight(bg_mnight),
+    .gfx_robokid(gfx_robokid),
+    .is_omegaf(is_omegaf),
+
+    .fg_vram_addr(fg_vram_addr), .fg_vram_data(fg_vram_data),
+    .bg0_vram_addr(bg0_vram_addr), .bg0_vram_data(bg0_vram_data),
+    .bg1_vram_addr(bg1_vram_addr), .bg1_vram_data(bg1_vram_data),
+    .bg2_vram_addr(bg2_vram_addr), .bg2_vram_data(bg2_vram_data),
+    .bg0_scrollx(bg0_scrollx), .bg0_scrolly(bg0_scrolly),
+    .bg1_scrollx(bg1_scrollx), .bg1_scrolly(bg1_scrolly),
+    .bg2_scrollx(bg2_scrollx), .bg2_scrolly(bg2_scrolly),
+    .bg_layer_en(bg_layer_en),
+    .char_addr(char_addr), .char_req(char_req), .char_ack(char_ack), .char_data(char_data),
+    .tile1_addr(tile1_addr), .tile1_req(tile1_req), .tile1_ack(tile1_ack), .tile1_data(tile1_data),
+    .tile2_addr(tile2_addr), .tile2_req(tile2_req), .tile2_ack(tile2_ack), .tile2_data(tile2_data),
+    .tile3_addr(tile3_addr), .tile3_req(tile3_req), .tile3_ack(tile3_ack), .tile3_data(tile3_data),
+    .fb_raddr(fb_raddr), .fb_rdata(fb_rdata), .spr_draw_window(spr_draw_window),
+    .pal_index(pal_index), .pal_rgb(pal_rgb),
+
+    .HSync(HSync), .VSync(VSync),
+    .HBlank(HBlank), .VBlank(VBlank),
+    .R(R), .G(G), .B(B)
+);
+
+//------------------------------------------------------- Sprites -------------------------------------------------------------//
+
+UPLFramebuffer_SPRITE sprites
+(
+    .clk(clk),
+    .reset(reset),
+
+    .flip_screen(flip_screen),
+    .gfx_robokid(gfx_robokid),
+    .is_omegaf(is_omegaf),
+    .overdraw(sprite_overdraw),
+    .draw_window(spr_draw_window),
+
+    .spr_ram_addr(work_addr), .spr_ram_data(work_data),
+    .spr_addr(spr_addr), .spr_req(spr_req), .spr_ack(spr_ack), .spr_data(spr_data),
+
+    .fb_raddr(fb_raddr), .fb_rdata(fb_rdata),
+    .busy(),
+
+    .fb_i(ram_fb_i), .fb_o(ram_fb_o)
+);
+
+//------------------------------------------------------- Sound board ---------------------------------------------------------//
+
+wire signed [15:0] snd_mono;
+
+UPLFramebuffer_SND snd_board
+(
+    .clk(clk),
+    .cen_cpu(cen_snd),
+    .cen_ym(cen_ym),
+    .reset(reset | snd_reset),
+    .pause(pause),
+
+    .sound_latch(sound_latch),
+    .sound_latch_wr(sound_latch_wr),
+
+    .rom_addr(audiocpu_addr),
+    .rom_data(audiocpu_data),
+    .rom_m1(audiocpu_m1),
+    .pcm_cmd(pcm_cmd),
+    .pcm_cmd_wr(pcm_cmd_wr),
+
+    .sound_out(snd_mono),
+
+    .z80_i(z80r_1_i), .z80_o(z80r_1_o),
+    .ym_i(ym2203_i), .ym_o(ym2203_o)
+);
+
+// Mono board - one SPEAKER (ninjakd2.cpp:1575)
+wire signed [15:0] pcm_snd;
+
+UPLFramebuffer_PCM pcm_player
+(
+    .clk(clk),
+    .reset(reset),
+    .pause(pause),
+    .cmd(pcm_cmd),
+    .cmd_wr(pcm_cmd_wr),
+    .rom_addr(pcm_addr),
+    .rom_req(pcm_req),
+    .rom_ack(pcm_ack),
+    .rom_data(pcm_data),
+    .sample_out(pcm_snd)
+);
+
+// Sum and saturate. The YM mix keeps its existing level (HW-approved), so the
+// PCM adds on top and only clips where the two peak together.
+wire signed [16:0] snd_mix = {snd_mono[15], snd_mono} + {pcm_snd[15], pcm_snd};
+wire signed [15:0] snd_sat = (snd_mix >  17'sd32767) ?  16'sd32767 :
+                             (snd_mix < -17'sd32768) ? -16'sd32768 : snd_mix[15:0];
+
+assign sound = snd_sat;
+
+endmodule
