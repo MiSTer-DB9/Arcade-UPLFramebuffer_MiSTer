@@ -93,8 +93,28 @@ typedef struct packed {
     logic        irq_n;
     logic  [7:0] ioa_out;
     logic  [7:0] iob_out;
+    logic        ioa_oe;                // port is an output (SSG register 7 bit 6 / 7)
+    logic        iob_oe;
     logic  [9:0] psg_snd;               // SSG only, unsigned
     logic [15:0] snd;                   // FM + SSG, signed
 } ym2203_o_t;
+
+// Dual-port RAM block (dpram_dc, true dual port, both ports read/write). One bus shape for every pooled RAM:
+// each instance uses the low widthad address bits and its width_a data bits; be is used by the 32-bit ones only
+typedef struct packed {
+    logic [13:0] a_addr;
+    logic        a_we;
+    logic  [3:0] a_be;
+    logic [31:0] a_din;
+    logic [13:0] b_addr;
+    logic        b_we;
+    logic  [3:0] b_be;
+    logic [31:0] b_din;
+} dpram_i_t;
+
+typedef struct packed {
+    logic [31:0] a_q;
+    logic [31:0] b_q;
+} dpram_o_t;
 
 endpackage

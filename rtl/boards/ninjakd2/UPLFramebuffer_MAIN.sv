@@ -51,9 +51,13 @@ module UPLFramebuffer_MAIN
 
     input                vblank,            // from VIDEO; rising edge raises the IRQ
 
-    // ---- shared main Z80 (rtl/UPLFramebuffer.sv)
-    output chip_pool_pkg::z80r_i_t z80_i,
-    input  chip_pool_pkg::z80_o_t  z80_o
+    // ---- shared main Z80 and RAMs (rtl/UPLFramebuffer.sv)
+    output chip_pool_pkg::z80r_i_t        z80_i,
+    input  chip_pool_pkg::z80_o_t         z80_o,
+    output chip_pool_pkg::dpram_i_t       ram2k_0_i,   // fg VRAM
+    input  chip_pool_pkg::dpram_o_t       ram2k_0_o,
+    output chip_pool_pkg::dpram_i_t [3:0] ram8k_i,     // 0-2 bg VRAM per layer, 3 work RAM
+    input  chip_pool_pkg::dpram_o_t [3:0] ram8k_o
 );
 
     wire [15:0] A        = z80_o.a;
@@ -276,12 +280,16 @@ module UPLFramebuffer_MAIN
     // video side reads through work_addr.
     wire [7:0] fg_q_a, bg0_q_a, bg1_q_a, bg2_q_a, work_q_a;
 
-    dpram_dc #(.widthad_a(11), .width_a(8)) fg_ram
-    (
-        .clock_a(clk), .address_a(A[10:0]), .data_a(cpu_dout),
-        .wren_a(cen_cpu & mem_wr & cs_fg), .q_a(fg_q_a),
-        .clock_b(clk), .address_b(fg_vram_addr), .data_b(8'd0), .wren_b(1'b0), .q_b(fg_vram_data)
-    );
+    assign ram2k_0_i.a_addr = {3'd0, A[10:0]};
+    assign ram2k_0_i.a_we   = cen_cpu & mem_wr & cs_fg;
+    assign ram2k_0_i.a_be   = 4'hF;
+    assign ram2k_0_i.a_din  = {24'd0, cpu_dout};
+    assign ram2k_0_i.b_addr = {3'd0, fg_vram_addr};
+    assign ram2k_0_i.b_we   = 1'b0;
+    assign ram2k_0_i.b_be   = 4'hF;
+    assign ram2k_0_i.b_din  = 32'd0;
+    assign fg_q_a           = ram2k_0_o.a_q[7:0];
+    assign fg_vram_data     = ram2k_0_o.b_q[7:0];
 
     // Window -> layer. robokid: D000->2, D400->1, D800->0 (reversed vs its DD/DE/DF
     // control order). omegaf: C400->0, C800->1, CC00->2.
@@ -304,37 +312,32 @@ module UPLFramebuffer_MAIN
     // each layer's full 8K the tilemap itself (128x32 tiles x 2 bytes), not a double
     // buffer. robokid uses the bottom quarter. Layer 0 doubles as the flat
     // ninjakd2/mnight tilemap.
-    dpram_dc #(.widthad_a(13), .width_a(8)) bg0_ram
-    (
-        .clock_a(clk), .address_a(bg0_addr), .data_a(cpu_dout),
-        .wren_a(bg0_wr), .q_a(bg0_q_a),
-        .clock_b(clk), .address_b(bg0_vram_addr), .data_b(8'd0), .wren_b(1'b0),
-        .q_b(bg0_vram_data)
-    );
+    wire [12:0] r8_a_addr [0:3];
+    wire        r8_a_we   [0:3];
+    wire [12:0] r8_b_addr [0:3];
+    assign r8_a_addr[0] = bg0_addr;  assign r8_a_we[0] = bg0_wr;                    assign r8_b_addr[0] = bg0_vram_addr;
+    assign r8_a_addr[1] = bgb_addr;  assign r8_a_we[1] = bg1_wr;                    assign r8_b_addr[1] = bg1_vram_addr;
+    assign r8_a_addr[2] = bgb_addr;  assign r8_a_we[2] = bg2_wr;                    assign r8_b_addr[2] = bg2_vram_addr;
+    assign r8_a_addr[3] = A[12:0];   assign r8_a_we[3] = cen_cpu & mem_wr & cs_work; assign r8_b_addr[3] = work_addr;
 
-    dpram_dc #(.widthad_a(13), .width_a(8)) bg1_ram
-    (
-        .clock_a(clk), .address_a(bgb_addr), .data_a(cpu_dout),
-        .wren_a(bg1_wr), .q_a(bg1_q_a),
-        .clock_b(clk), .address_b(bg1_vram_addr), .data_b(8'd0), .wren_b(1'b0),
-        .q_b(bg1_vram_data)
-    );
+    genvar ri;
+    generate
+        for (ri = 0; ri < 4; ri = ri + 1) begin : r8
+            assign ram8k_i[ri].a_addr = {1'b0, r8_a_addr[ri]};
+            assign ram8k_i[ri].a_we   = r8_a_we[ri];
+            assign ram8k_i[ri].a_be   = 4'hF;
+            assign ram8k_i[ri].a_din  = {24'd0, cpu_dout};
+            assign ram8k_i[ri].b_addr = {1'b0, r8_b_addr[ri]};
+            assign ram8k_i[ri].b_we   = 1'b0;
+            assign ram8k_i[ri].b_be   = 4'hF;
+            assign ram8k_i[ri].b_din  = 32'd0;
+        end
+    endgenerate
 
-    dpram_dc #(.widthad_a(13), .width_a(8)) bg2_ram
-    (
-        .clock_a(clk), .address_a(bgb_addr), .data_a(cpu_dout),
-        .wren_a(bg2_wr), .q_a(bg2_q_a),
-        .clock_b(clk), .address_b(bg2_vram_addr), .data_b(8'd0), .wren_b(1'b0),
-        .q_b(bg2_vram_data)
-    );
-
-
-    dpram_dc #(.widthad_a(13), .width_a(8)) work_ram
-    (
-        .clock_a(clk), .address_a(A[12:0]), .data_a(cpu_dout),
-        .wren_a(cen_cpu & mem_wr & cs_work), .q_a(work_q_a),
-        .clock_b(clk), .address_b(work_addr), .data_b(8'd0), .wren_b(1'b0), .q_b(work_data)
-    );
+    assign bg0_q_a  = ram8k_o[0].a_q[7:0];   assign bg0_vram_data = ram8k_o[0].b_q[7:0];
+    assign bg1_q_a  = ram8k_o[1].a_q[7:0];   assign bg1_vram_data = ram8k_o[1].b_q[7:0];
+    assign bg2_q_a  = ram8k_o[2].a_q[7:0];   assign bg2_vram_data = ram8k_o[2].b_q[7:0];
+    assign work_q_a = ram8k_o[3].a_q[7:0];   assign work_data     = ram8k_o[3].b_q[7:0];
 
     // vblank IRQ: HOLD_LINE on the rising edge, acknowledge returns 0xD7 = RST 10h
     // (ninjakd2.cpp:775).

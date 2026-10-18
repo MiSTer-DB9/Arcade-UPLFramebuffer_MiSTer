@@ -50,7 +50,13 @@ module ninjakd2_board
     output chip_pool_pkg::z80r_i_t         z80r_1_i,    // sound Z80
     input  chip_pool_pkg::z80_o_t          z80r_1_o,
     output chip_pool_pkg::ym2203_i_t [1:0] ym2203_i,
-    input  chip_pool_pkg::ym2203_o_t [1:0] ym2203_o
+    input  chip_pool_pkg::ym2203_o_t [1:0] ym2203_o,
+    output chip_pool_pkg::dpram_i_t        ram2k_0_i,   // fg VRAM
+    input  chip_pool_pkg::dpram_o_t        ram2k_0_o,
+    output chip_pool_pkg::dpram_i_t  [3:0] ram8k_i,     // bg VRAM x3, work RAM
+    input  chip_pool_pkg::dpram_o_t  [3:0] ram8k_o,
+    output chip_pool_pkg::dpram_i_t        ram_fb_i,    // sprite framebuffer
+    input  chip_pool_pkg::dpram_o_t        ram_fb_o
 );
 
 wire [15:0] fb_raddr;       wire [7:0] fb_rdata;       wire spr_draw_window;
@@ -104,7 +110,9 @@ UPLFramebuffer_MAIN main_board
 
     .vblank(VBlank),
 
-    .z80_i(z80r_0_i), .z80_o(z80r_0_o)
+    .z80_i(z80r_0_i), .z80_o(z80r_0_o),
+    .ram2k_0_i(ram2k_0_i), .ram2k_0_o(ram2k_0_o),
+    .ram8k_i(ram8k_i), .ram8k_o(ram8k_o)
 );
 
 //------------------------------------------------------- Video ---------------------------------------------------------------//
@@ -167,7 +175,9 @@ UPLFramebuffer_SPRITE sprites
     .spr_addr(spr_addr), .spr_req(spr_req), .spr_ack(spr_ack), .spr_data(spr_data),
 
     .fb_raddr(fb_raddr), .fb_rdata(fb_rdata),
-    .busy()
+    .busy(),
+
+    .fb_i(ram_fb_i), .fb_o(ram_fb_o)
 );
 
 //------------------------------------------------------- Sound board ---------------------------------------------------------//

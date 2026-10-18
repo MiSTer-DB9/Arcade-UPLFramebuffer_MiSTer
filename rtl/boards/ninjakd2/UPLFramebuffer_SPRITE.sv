@@ -38,7 +38,11 @@ module UPLFramebuffer_SPRITE
     input        [15:0] fb_raddr,
     output        [7:0] fb_rdata,
 
-    output              busy
+    output              busy,
+
+    // ---- shared framebuffer RAM (rtl/UPLFramebuffer.sv)
+    output chip_pool_pkg::dpram_i_t fb_i,
+    input  chip_pool_pkg::dpram_o_t fb_o
 );
 
     localparam [12:0] SPR_BASE = 13'h1A00;   // cpu 0xFA00 within the 0xE000 work RAM
@@ -78,13 +82,15 @@ module UPLFramebuffer_SPRITE
     // per-byte writes to `mem[a][7:0]` and builds a 16384:1 mux instead, blowing the
     // device. altsyncram's byteena is native and defaults to all-ones, so instances
     // that leave it unconnected are unaffected.
-    dpram_dc #(.widthad_a(14), .width_a(32)) framebuffer
-    (
-        .clock_a(clk), .address_a(fb_waddr), .data_a(fb_wdata),
-        .wren_a(fb_we), .byteena_a(fb_wbe), .q_a(),
-        .clock_b(clk), .address_b(fb_baddr), .data_b(32'd0),
-        .wren_b(1'b0), .q_b(fb_bq)
-    );
+    assign fb_i.a_addr = fb_waddr;
+    assign fb_i.a_we   = fb_we;
+    assign fb_i.a_be   = fb_wbe;
+    assign fb_i.a_din  = fb_wdata;
+    assign fb_i.b_addr = fb_baddr;
+    assign fb_i.b_we   = 1'b0;
+    assign fb_i.b_be   = 4'hF;
+    assign fb_i.b_din  = 32'd0;
+    assign fb_bq       = fb_o.b_q;
 
     // Sprite record decode
     reg  [6:0] spr_idx;      // spriteram entry, 0..95

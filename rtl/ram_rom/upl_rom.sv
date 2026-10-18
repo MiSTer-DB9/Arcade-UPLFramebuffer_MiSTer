@@ -40,6 +40,11 @@ module upl_rom
     input          [3:0] maincpu_bank,
     output         [7:0] maincpu_data,
 
+    // ---- nova2001.cpp boards: gfx from the bank image (their CPUs never read 8000-BFFF)
+    input                gfx_sel,
+    input         [17:0] gfx_addr,
+    output         [7:0] gfx_data,
+
     // ---- sound CPU ROM (BRAM). M1 fetches below 8000 come from the decrypted
     //      opcode half on the sets that ship one (ninjakd2a/ninjakd2b).
     input         [15:0] audiocpu_addr,
@@ -135,13 +140,14 @@ module upl_rom
 
     dpram_dc #(.widthad_a(18), .width_a(8)) rom_main_bank
     (
-        .clock_a(clk), .address_a({maincpu_bank, maincpu_addr[13:0]}),
+        .clock_a(clk), .address_a(gfx_sel ? gfx_addr : {maincpu_bank, maincpu_addr[13:0]}),
         .data_a(8'd0), .wren_a(1'b0), .q_a(mc_bank_q),
         .clock_b(clk), .address_b(mc_bank_off[17:0]),
         .data_b(ioctl_data), .wren_b(mc_wr && !mc_is_fixed), .q_b()
     );
 
     assign maincpu_data = maincpu_addr[15] ? mc_bank_q : mc_fixed_q;
+    assign gfx_data     = mc_bank_q;
 
     // Sound CPU ROM (BRAM). 0x00000-0x0FFFF data, 0x10000-0x17FFF opcodes.
     wire [16:0] sc_off   = ioctl_addr[16:0];

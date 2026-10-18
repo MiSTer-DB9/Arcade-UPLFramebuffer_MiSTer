@@ -61,7 +61,7 @@ wire [1:0] ar = status[14:13];
 // set_id: MRA index 5, captured inside upl_rom and exposed by the game top.
 //   0x00-0x0C ninjakd2 / mnight / arkarea / robokid (ROT0)   0x0D-0x0F omegaf (ROT270)
 wire [7:0] set_id;
-wire is_vertical = (set_id >= 8'h0D);
+wire is_vertical = (set_id >= 8'h0D) && (set_id <= 8'h0F);   // omegaf family; the nova2001.cpp sets (0x10+) are ROT0
 
 // Aspect keys off the same split as screen_rotate, so the two can never disagree.
 wire horz = ~is_vertical | status[12];
