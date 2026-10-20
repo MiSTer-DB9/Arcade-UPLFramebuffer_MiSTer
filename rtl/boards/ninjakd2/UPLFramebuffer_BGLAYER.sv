@@ -5,6 +5,8 @@
 //  Single layer on ninjakd2/mnight/arkarea, three identical ones on robokid and
 //  omegaf (ninjakd2.cpp robokid_get_bg_tile_info<Layer>). Instantiated per layer;
 //  the caller supplies the VRAM port, tile ROM client and scroll registers.
+//  XX = 1: the xxmissio bg (xxmissio.cpp get_bg_tile_info): 16x8 tiles, 512-wide screen,
+//  code at idx / attr at 0x400 + idx, no tile flip, 64 bytes per tile. Defaults = ninjakd2.
 //
 //  The raster-aligned fetch window and the untruncated 9-bit position below are both
 //  load-bearing — do not "simplify" either one.
@@ -12,8 +14,11 @@
 //============================================================================
 
 module UPLFramebuffer_BGLAYER #(
-    parameter [8:0] H_TOTAL = 9'd384,
-    parameter [8:0] V_TOTAL = 9'd262
+    parameter       HW      = 9,          // h_cnt width
+    parameter [9:0] H_TOTAL = 10'd384,
+    parameter [8:0] V_TOTAL = 9'd262,
+    parameter [9:0] W_LAST  = 10'd255,    // last visible x: screen flip mirrors around it
+    parameter       XX      = 0
 )
 (
     input               clk,
@@ -24,7 +29,7 @@ module UPLFramebuffer_BGLAYER #(
                                          // a disabled layer must not spend SDRAM slots, or
                                          // the single-layer sets lose 2/3 of the arbiter
 
-    input         [8:0] h_cnt,
+    input  [HW-1:0]     h_cnt,
     input         [8:0] v_cnt,
     input               flip_screen,
 
@@ -53,30 +58,30 @@ module UPLFramebuffer_BGLAYER #(
     // pixel. Pipeline per group: cur <= nxt, nxt <= new, and a fetch starts for the
     // tile two groups ahead — the +32 lookahead is what makes nxt valid on a straddle.
 
-    wire [8:0] fh = (h_cnt >= H_TOTAL - 9'd32) ? (h_cnt - (H_TOTAL - 9'd32)) : (h_cnt + 9'd32);
-    wire [8:0] fv = (h_cnt >= H_TOTAL - 9'd32) ? ((v_cnt == V_TOTAL - 1'd1) ? 9'd0 : v_cnt + 1'd1) : v_cnt;
+    wire [HW-1:0] fh = (h_cnt >= H_TOTAL - 10'd32) ? (h_cnt - (H_TOTAL - 10'd32)) : (h_cnt + 10'd32);
+    wire    [8:0] fv = (h_cnt >= H_TOTAL - 10'd32) ? ((v_cnt == V_TOTAL - 1'd1) ? 9'd0 : v_cnt + 1'd1) : v_cnt;
 
     // Full 9 bits, no truncation to the 256-wide screen: the lookahead runs past 255
     // into hblank, and a straddling group at end of line needs that map column.
-    wire [8:0] fsx = flip_screen ? (9'd255 - fh) : fh;
+    wire [HW-1:0] fsx = flip_screen ? (W_LAST - fh) : fh;
     wire [8:0] fsy = flip_screen ? (9'd255 - fv) : fv;
 
     // 11-bit X: omegaf's map is 128x32 tiles = 2048 px wide. Other sets are 32x32 and
     // mask back to 5 column bits below, keeping their mod-512 wrap.
-    wire [10:0] fmx = {2'b00, fsx} + scrollx[10:0];
+    wire [10:0] fmx = {{(11-HW){1'b0}}, fsx} + scrollx[10:0];
     wire  [8:0] fmy = fsy + scrolly[8:0];
 
     // map coordinates of the pixel being displayed, and of the next group's first
-    wire [8:0]  h_p1 = (h_cnt == H_TOTAL - 1'd1) ? 9'd0 : h_cnt + 1'd1;
-    wire [8:0]  dsx  = flip_screen ? (9'd255 - h_cnt) : h_cnt;
-    wire [8:0]  dsx1 = flip_screen ? (9'd255 - h_p1)  : h_p1;
-    wire [10:0] dmx  = {2'b00, dsx}  + scrollx[10:0];
-    wire [10:0] dmx1 = {2'b00, dsx1} + scrollx[10:0];
+    wire [HW-1:0] h_p1 = (h_cnt == H_TOTAL - 1'd1) ? {HW{1'b0}} : h_cnt + 1'd1;
+    wire [HW-1:0] dsx  = flip_screen ? (W_LAST - h_cnt) : h_cnt;
+    wire [HW-1:0] dsx1 = flip_screen ? (W_LAST - h_p1)  : h_p1;
+    wire [10:0]   dmx  = {{(11-HW){1'b0}}, dsx}  + scrollx[10:0];
+    wire [10:0]   dmx1 = {{(11-HW){1'b0}}, dsx1} + scrollx[10:0];
 
     wire [6:0] bg_fcol  = is_omegaf ? fmx[10:4]  : {2'b00, fmx[8:4]};
     wire [6:0] bg_dcol  = is_omegaf ? dmx[10:4]  : {2'b00, dmx[8:4]};
     wire [6:0] bg_dcol1 = is_omegaf ? dmx1[10:4] : {2'b00, dmx1[8:4]};
-    wire [4:0] bg_frow  = fmy[8:4];
+    wire [4:0] bg_frow  = XX ? fmy[7:3] : fmy[8:4];       // xxmissio rows are 8 px
 
     // Scan. ninjakd2/mnight are row-major; robokid_bg_scan and omegaf_bg_scan put the
     // high column bits above the row, i.e. 16-column strips:
@@ -112,14 +117,15 @@ module UPLFramebuffer_BGLAYER #(
     // hi bit4 as tile bit 10; ninjakd2 keeps a 10-bit index with flipx on bit4.
     wire [11:0] bg_tile  = gfx_robokid ? {bhi[4], bhi[5], bhi[7:6], blo}
                                       : {1'b0, bg_mnight & bhi[4], bhi[7:6], blo};
-    wire        bg_flipy = gfx_robokid ? 1'b0 : bhi[5];
+    wire        bg_flipy = (XX | gfx_robokid) ? 1'b0 : bhi[5];
     wire  [3:0] bg_ty    = bg_flipy ? ~bfetch_my : bfetch_my;
 
     // 128 bytes per 16x16 tile, four 8x8 sub-tiles. row_2x2 is 0 1 / 2 3, col_2x2
     // (robokid/omegaf) is 0 2 / 1 3: the sub-tile bits swap (emu/video/generic.cpp:145).
     wire bg_sub_hi = gfx_robokid ? bj[2]    : bg_ty[3];
     wire bg_sub_lo = gfx_robokid ? bg_ty[3] : bj[2];
-    wire [18:0] bg_rom_addr = {bg_tile, bg_sub_hi, bg_sub_lo, bg_ty[2:0], bj[1:0]};
+    wire [18:0] bg_rom_addr = XX ? {3'b000, bg_tile[9:0], bg_ty[2:0], bj[2:0]}       // xxmissio: 64 bytes per 16x8 tile
+                                 : {bg_tile, bg_sub_hi, bg_sub_lo, bg_ty[2:0], bj[1:0]};
 
     always_ff @(posedge clk) begin
         if (reset || !fetch_en || !en) begin
@@ -140,17 +146,21 @@ module UPLFramebuffer_BGLAYER #(
                 case (bst)
                     4'd0: begin
                         bfetch_tidx <= bg_scan;
-                        bfetch_my   <= fmy[3:0];
-                        bg_addr_r   <= {bg_scan, 1'b0};
+                        bfetch_my   <= XX ? {1'b0, fmy[2:0]} : fmy[3:0];
+                        bg_addr_r   <= XX ? {2'b00, 1'b0, bg_scan[9:0]} : {bg_scan, 1'b0};
                         bst         <= 4'd1;
                     end
                     4'd1: bst <= 4'd2;                                  // BRAM latency
-                    4'd2: begin blo <= vram_data; bg_addr_r <= {bfetch_tidx, 1'b1}; bst <= 4'd3; end
+                    4'd2: begin
+                        blo <= vram_data;
+                        bg_addr_r <= XX ? {2'b00, 1'b1, bfetch_tidx[9:0]} : {bfetch_tidx, 1'b1};
+                        bst <= 4'd3;
+                    end
                     4'd3: bst <= 4'd4;
                     4'd4: begin
                         bhi          <= vram_data;
                         bg_new_color <= vram_data[3:0];
-                        bg_new_flipx <= (gfx_robokid | bg_mnight) ? 1'b0 : vram_data[4];
+                        bg_new_flipx <= (XX | gfx_robokid | bg_mnight) ? 1'b0 : vram_data[4];
                         bst          <= 4'd5;
                     end
                     4'd5: begin rom_addr_r <= bg_rom_addr; rom_req_r <= 1'b1; bst <= 4'd6; end

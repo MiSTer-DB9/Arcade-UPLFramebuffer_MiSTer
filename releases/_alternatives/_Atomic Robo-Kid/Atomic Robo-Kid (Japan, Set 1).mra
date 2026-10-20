@@ -1,5 +1,5 @@
 <misterromdescription>
-    <name>Atomic Robo-Kid (Japan, set 1)</name>
+    <name>Atomic Robo-Kid (Japan, Set 1)</name>
     <setname>robokidj</setname>
     <parent>robokid</parent>
     <year>1988</year>
@@ -95,10 +95,6 @@
         <part name="robokid.17a" crc="f0863106"/>
         <part name="robokid.18a" crc="fdff7441"/>
         <part repeat="0x20000">00</part>
-    </rom>
-
-    <!-- Index 11: Main CPU PROM -->
-    <rom index="11" md5="none" zip="robokid.zip|robokidj.zip">
     </rom>
 
     <!-- Index 5: game-select byte -->
