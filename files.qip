@@ -17,6 +17,7 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/boards/ninjakd2/UPLFramebuffe
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/boards/ninjakd2/UPLFramebuffer_SND.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/boards/ninjakd2/UPLFramebuffer_PCM.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/boards/nova2001/nova2001_board.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/boards/xxmissio/xxmissio_board.sv
 
 set_global_assignment -name VERILOG_FILE rtl/mister_custom/hiscore.v
 set_global_assignment -name VERILOG_FILE rtl/mister_custom/nvram.v

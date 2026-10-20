@@ -28,6 +28,8 @@ module nova2001_board
     input          [7:0] dsw2,
 
     input                crt_flip,
+    input  signed  [3:0] h_adj,          // CRT position: + = sync 2 px earlier = picture right
+    input  signed  [3:0] v_adj,          //               + = sync 1 line earlier = picture down
 
     // ---- program ROM 0000-7FFF (rom_main_fixed), second ROM (rom_snd_lo: pkunwar E000, ninjakun sub 0000),
     //      gfx (rom_main_bank, 1-clock read: gfx1 at 0, gfx2 at 0x8000)
@@ -115,6 +117,13 @@ wire       vsync_l = ~v9[8];
 wire       vblank  = ~v9[8] | (v8 < 8'd32) | (v8 >= 8'd224);
 wire       hblank  = hc[8];
 wire       hsync   = (hc >= 9'd320) && (hc < 9'd352);
+
+// Output syncs with the OSD position applied (sync only; blanking and the sprite engine keep vsync_l).
+// VSYNC moves around the 264-line cycle: ln = line since V_LOAD, sync while (ln + v_adj) mod 264 < 8.
+wire [8:0] hs_on   = 9'd320 - {{4{h_adj[3]}}, h_adj, 1'b0};
+wire       hsync_o = (hc >= hs_on) && (hc < hs_on + 9'd32);
+wire [9:0] vs_ln   = {1'b0, v9} - {1'b0, V_LOAD} + {{6{v_adj[3]}}, v_adj} + 10'd264;
+wire       vsync_o = ((vs_ln >= 10'd264) ? (vs_ln - 10'd264) : vs_ln) < 10'd8;
 wire       disp    = ~vblank & ~hblank;
 
 //------------------------------------------------------- CPU bus --------------------------------------------------------------//
@@ -481,8 +490,8 @@ always_ff @(posedge clk) begin
         B <= disp ? {b4, b4} : 8'd0;
         HBlank <= hblank;
         VBlank <= vblank;
-        HSync  <= hsync;
-        VSync  <= vsync_l;
+        HSync  <= hsync_o;
+        VSync  <= vsync_o;
     end
 end
 

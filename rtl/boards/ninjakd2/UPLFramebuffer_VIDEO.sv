@@ -12,6 +12,8 @@ module UPLFramebuffer_VIDEO
     input               reset,
 
     input               flip_screen,
+    input  signed [3:0] h_adj,           // CRT position: + = sync 2 px earlier = picture right
+    input  signed [3:0] v_adj,           //               + = sync 1 line earlier = picture down
     input               bg_mnight,       // mnight/arkarea bg tile decode (11-bit index)
     input               gfx_robokid,      // robokid/omegaf palette bases, gfx col order, 5-bit RGB
     input               is_omegaf,        // bg map is 128x32 tiles, not 32x32
@@ -63,14 +65,14 @@ module UPLFramebuffer_VIDEO
 
     localparam H_TOTAL   = 9'd384;
     localparam H_VIS     = 9'd256;
-    localparam HS_START  = 9'd272;
-    localparam HS_END    = 9'd304;
+    localparam HS_START  = 9'd292;    // centred in blanking: 36 px front porch, 60 back
+    localparam HS_END    = 9'd324;
 
     localparam V_TOTAL   = 9'd262;
     localparam V_VIS_LO  = 9'd32;    // MAME visarea min_y
     localparam V_VIS_HI  = 9'd224;   // one past max_y (223)
-    localparam VS_START  = 9'd232;
-    localparam VS_END    = 9'd235;
+    localparam VS_START  = 9'd251;    // centred in blanking: 27 lines front porch, 40 back
+    localparam VS_END    = 9'd254;
 
     reg [8:0] h_cnt = 9'd0;
     reg [8:0] v_cnt = 9'd0;
@@ -97,8 +99,11 @@ module UPLFramebuffer_VIDEO
 
     wire hblank_raw = (h_cnt >= H_VIS);
     wire vblank_raw = (v_cnt < V_VIS_LO) || (v_cnt >= V_VIS_HI);
-    wire hsync_raw  = (h_cnt >= HS_START) && (h_cnt < HS_END);
-    wire vsync_raw  = (v_cnt >= VS_START) && (v_cnt < VS_END);
+    // OSD position moves the sync pulses only; blanking stays put. Range keeps both inside blanking.
+    wire [8:0] hs_on    = HS_START - {{4{h_adj[3]}}, h_adj, 1'b0};
+    wire [8:0] vs_on    = VS_START - {{5{v_adj[3]}}, v_adj};
+    wire hsync_raw  = (h_cnt >= hs_on) && (h_cnt < hs_on + (HS_END - HS_START));
+    wire vsync_raw  = (v_cnt >= vs_on) && (v_cnt < vs_on + (VS_END - VS_START));
 
     // Foreground tilemap fetch: one 8-pixel group fetched while the previous is
     // displayed. ninjakd2.cpp get_fg_tile_info:

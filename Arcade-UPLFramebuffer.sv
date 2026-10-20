@@ -60,8 +60,10 @@ wire [1:0] ar = status[14:13];
 
 // set_id: MRA index 5, captured inside upl_rom and exposed by the game top.
 //   0x00-0x0C ninjakd2 / mnight / arkarea / robokid (ROT0)   0x0D-0x0F omegaf (ROT270)
+//   0x10-0x19 nova2001.cpp (ROT0)                             0x1A xxmissio (ROT90)
 wire [7:0] set_id;
-wire is_vertical = (set_id >= 8'h0D) && (set_id <= 8'h0F);   // omegaf family; the nova2001.cpp sets (0x10+) are ROT0
+wire is_xx       = (set_id == 8'h1A);
+wire is_vertical = ((set_id >= 8'h0D) && (set_id <= 8'h0F)) | is_xx;
 
 // Aspect keys off the same split as screen_rotate, so the two can never disagree.
 wire horz = ~is_vertical | status[12];
@@ -78,6 +80,8 @@ localparam CONF_STR = {
 	"P1OB,HDMI Flip,Off,On;",
 	"P1OM,CRT Flip,Off,On;",
 	"P1OFH,Scandoubler Fx,None,HQ2x,CRT 25%,CRT 50%,CRT 75%;",
+	"P1O[35:32],H Position (CRT),0,+1,+2,+3,+4,+5,+6,+7,-8,-7,-6,-5,-4,-3,-2,-1;",
+	"P1O[39:36],V Position (CRT),0,+1,+2,+3,+4,+5,+6,+7,-8,-7,-6,-5,-4,-3,-2,-1;",
 	"-;",
 	"P2,Pause Options;",
 	"P2OP,Pause when OSD is open,On,Off;",
@@ -99,7 +103,7 @@ localparam CONF_STR = {
 
 wire        forced_scandoubler;
 wire  [1:0] buttons;
-wire [31:0] status;
+wire [127:0] status;
 wire [10:0] ps2_key;
 
 wire        ioctl_download;
@@ -394,13 +398,13 @@ wire hs, vs;
 wire [7:0] r, g, b;
 wire ce_pix;
 
-// Only omegaf (set_id 0x0D-0x0F) is ROT270; every other UPL set here is ROT0.
-wire rotate_ccw  = 1'b1;                                    // ROT270 = counter-clockwise
+// omegaf (set_id 0x0D-0x0F) is ROT270, xxmissio (0x1A) ROT90; every other UPL set here is ROT0.
+wire rotate_ccw  = ~is_xx;                                  // ROT270 = counter-clockwise
 wire no_rotate   = ~is_vertical | status[12] | direct_video;
 wire flip        = status[11];
 screen_rotate screen_rotate(.*);
 
-arcade_video #(256,24) arcade_video
+arcade_video #(512,24) arcade_video                         // xxmissio is 512 wide
 (
 	.*,
 
@@ -465,6 +469,8 @@ UPLFramebuffer uplframebuffer_inst
 	.ioctl_wait(ioctl_wait),
 
 	.crt_flip(status[22]),          // CRT Flip
+	.h_adj(status[35:32]),          // CRT position: + moves the picture right, 2 px per step
+	.v_adj(status[39:36]),          //               + moves it down, 1 line per step
 
 	.pause(pause_cpu),
 

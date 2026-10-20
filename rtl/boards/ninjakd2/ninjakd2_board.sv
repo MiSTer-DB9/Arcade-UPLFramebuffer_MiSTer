@@ -27,6 +27,8 @@ module ninjakd2_board
     input          [7:0] dsw2,
 
     input                crt_flip,
+    input  signed  [3:0] h_adj,          // CRT position, sync only
+    input  signed  [3:0] v_adj,
 
     // ---- ROM regions (rtl/ram_rom/upl_rom.sv)
     output        [15:0] maincpu_addr,  output  [3:0] maincpu_bank, input  [7:0] maincpu_data,
@@ -134,6 +136,7 @@ UPLFramebuffer_VIDEO video
     .reset(reset),
 
     .flip_screen(flip_screen),
+    .h_adj(h_adj), .v_adj(v_adj),
     .bg_mnight(bg_mnight),
     .gfx_robokid(gfx_robokid),
     .is_omegaf(is_omegaf),
