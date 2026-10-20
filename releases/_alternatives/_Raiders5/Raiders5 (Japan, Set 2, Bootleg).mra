@@ -29,7 +29,7 @@
         <dip bits="9,10" name="Lives" ids="2,5,4,3"/>
         <dip bits="11" name="1st Bonus" ids="40000,30000"/>
         <dip bits="12,13" name="2nd Bonus" ids="None,Every 90000,Every 70000,Every 50000"/>
-        <dip bits="14" name="Exercise" ids="Off,On"/>
+        <dip bits="14" name="Swap Controls + Flip Screen" ids="On,Off"/>
         <dip bits="15" name="Difficulty" ids="Hard,Normal"/>
     </switches>
 

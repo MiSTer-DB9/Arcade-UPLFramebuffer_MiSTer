@@ -97,10 +97,6 @@
         <part repeat="0x20000">00</part>
     </rom>
 
-    <!-- Index 11: Main CPU PROM -->
-    <rom index="11" md5="none" zip="robokid.zip|robokidj3.zip">
-    </rom>
-
     <!-- Index 5: game-select byte -->
     <rom index="5"><part>0C</part></rom>
 

@@ -39,7 +39,7 @@
         <part name="xx3.6a" crc="16fdacab"/>
         <part name="xx4.6b" crc="274bd4d2"/>
         <part name="xx5.6d" crc="c5f35535"/>
-        <part repeat="32768">FF</part>
+        <part repeat="0x8000">FF</part>
         <part name="xx8.8f" crc="a9587cc6"/>
         <part name="xx6.8j" crc="dc954d01"/>
         <part name="xx9.8e" crc="854e0e5f"/>
