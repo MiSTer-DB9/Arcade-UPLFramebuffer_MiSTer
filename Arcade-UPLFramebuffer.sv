@@ -276,42 +276,63 @@ always @(posedge CLK_60M) if (por_reset) por_cnt <= por_cnt + 1'b1;
 
 ///////////////////         Keyboard           //////////////////
 
-reg btn_up       = 0;
-reg btn_down     = 0;
-reg btn_left     = 0;
-reg btn_right    = 0;
-reg btn_attack   = 0;
-reg btn_jump     = 0;
-reg btn_coin1    = 0;
-reg btn_coin2    = 0;
-reg btn_1p_start = 0;
-reg btn_2p_start = 0;
-reg btn_pause    = 0;
-reg btn_service  = 0;
-
-wire pressed = ~ps2_key[9];
-wire [7:0] code = ps2_key[7:0];
-always @(posedge CLK_60M) begin
-	reg old_state;
-	old_state <= ps2_key[10];
-	if(old_state != ps2_key[10]) begin
-		case(code)
-			'h16: btn_1p_start <= pressed; // 1 = Player 1 Start
-			'h1E: btn_2p_start <= pressed; // 2 = Player 2 Start
-			'h2E: btn_coin1    <= pressed; // 5 = Coin Input 1
-			'h36: btn_coin2    <= pressed; // 6 = Coin Input 2
-			'h4D: btn_pause    <= pressed; // P = Pause
-			'h46: btn_service  <= pressed; // 9 = Test Advance
-
-			'h75: btn_up       <= pressed; // up         = Up
-			'h72: btn_down     <= pressed; // down       = Down
-			'h6B: btn_left     <= pressed; // left       = Left
-			'h74: btn_right    <= pressed; // right      = Right
-			'h14: btn_attack   <= pressed; // ctrl       = Attack
-			'h12: btn_jump     <= pressed; // left shift = Jump
-		endcase 
-	end
-end
+// CTL-2026-10-25: original keyboard block, replaced by ctl_keyboard below
+// reg btn_up       = 0;
+// reg btn_down     = 0;
+// reg btn_left     = 0;
+// reg btn_right    = 0;
+// reg btn_attack   = 0;
+// reg btn_jump     = 0;
+// reg btn_coin1    = 0;
+// reg btn_coin2    = 0;
+// reg btn_1p_start = 0;
+// reg btn_2p_start = 0;
+// reg btn_pause    = 0;
+// reg btn_service  = 0;
+//
+// wire pressed = ~ps2_key[9];
+// wire [7:0] code = ps2_key[7:0];
+// always @(posedge CLK_60M) begin
+// 	reg old_state;
+// 	old_state <= ps2_key[10];
+// 	if(old_state != ps2_key[10]) begin
+// 		case(code)
+// 			'h16: btn_1p_start <= pressed; // 1 = Player 1 Start
+// 			'h1E: btn_2p_start <= pressed; // 2 = Player 2 Start
+// 			'h2E: btn_coin1    <= pressed; // 5 = Coin Input 1
+// 			'h36: btn_coin2    <= pressed; // 6 = Coin Input 2
+// 			'h4D: btn_pause    <= pressed; // P = Pause
+// 			'h46: btn_service  <= pressed; // 9 = Test Advance
+//
+// 			'h75: btn_up       <= pressed; // up         = Up
+// 			'h72: btn_down     <= pressed; // down       = Down
+// 			'h6B: btn_left     <= pressed; // left       = Left
+// 			'h74: btn_right    <= pressed; // right      = Right
+// 			'h14: btn_attack   <= pressed; // ctrl       = Attack
+// 			'h12: btn_jump     <= pressed; // left shift = Jump
+// 		endcase 
+// 	end
+// end
+// CTL-2026-10-25: keyboard -> controllers.sv ctl_keyboard. Keys now act on PRESS (the old `~ps2_key[9]` made them act
+// on release and stay held). Extended bit ignored = STD_EXT 0, as before. Extra-key table: left Shift (0x12, level,
+// either extended form) -> kbx[0] = Jump. No toggle keys, so pause changes nothing.
+wire        pause_cpu;   // CTL-2026-10-25: declared here (was in PAUSE SYSTEM below) so ctl_keyboard can take it
+wire [12:0] kb;
+wire  [0:0] kbx;
+ctl_keyboard #(.NX(1), .NXO(1), .XKEYS({24'h10_12_00})) keyboard
+	(.clk(CLK_60M), .ps2_key(ps2_key), .pause(pause_cpu), .kb(kb), .kbx(kbx));
+wire btn_up       = kb[0];    // up         = Up
+wire btn_down     = kb[1];    // down       = Down
+wire btn_left     = kb[2];    // left       = Left
+wire btn_right    = kb[3];    // right      = Right
+wire btn_attack   = kb[4];    // ctrl       = Attack
+wire btn_jump     = kbx[0];   // left shift = Jump
+wire btn_1p_start = kb[6];    // 1 = Player 1 Start
+wire btn_2p_start = kb[7];    // 2 = Player 2 Start
+wire btn_coin1    = kb[8];    // 5 = Coin Input 1
+wire btn_coin2    = kb[9];    // 6 = Coin Input 2
+wire btn_service  = kb[10];   // 9 = Test Advance
+wire btn_pause    = kb[12];   // P = Pause
 
 //////////////////  Game select (mod byte, MRA <rom index="5">)  ///////////////////////////
 
@@ -380,7 +401,7 @@ assign      ioctl_din       = 8'd0;
 assign      ioctl_upload_req = 1'b0;
 
 // PAUSE SYSTEM
-wire pause_cpu;
+// wire pause_cpu;   // CTL-2026-10-25: moved up to the keyboard block
 wire [23:0] rgb_out;
 pause #(8,8,8,60) pause
 (
